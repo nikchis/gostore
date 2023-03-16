@@ -66,7 +66,7 @@ func (s *store[T]) set(key string, value T) {
 	s.Unlock()
 }
 
-func (s *store[T]) setWithTtl(key string, value T, ttl time.Duration) {
+func (s *store[T]) setWithTTL(key string, value T, ttl time.Duration) {
 	item := item[T]{
 		value:  value,
 		expire: time.Now().Add(ttl),
@@ -80,16 +80,6 @@ func (s *store[T]) get(key string) (T, bool) {
 	s.RLock()
 	v, ok := s.data[key]
 	s.RUnlock()
-	/*
-		// Too expensive for performance
-		if ok && time.Now().After(v.expire) {
-			var r T
-			s.Lock()
-			delete(s.data, key)
-			s.Unlock()
-			return r, false
-		}
-	*/
 	return v.value, ok
 }
 
@@ -103,7 +93,7 @@ func (s *store[T]) delete(key string) {
 
 type Store[T any] struct {
 	sync.RWMutex
-	arr    [16]*store[T]
+	arr    [17]*store[T]
 	ttl    time.Duration
 	closed bool
 }
@@ -133,7 +123,12 @@ func (s *Store[T]) Close() {
 	}
 }
 
+// Set is optimized for UUID keys, but other formats are allowed too
 func (s *Store[T]) Set(uuidKey string, value T) {
+	if uuidKey == "" {
+		return
+	}
+
 	k := uuidKey[len(uuidKey)-1]
 	s.RLock()
 	if s.closed {
@@ -173,11 +168,18 @@ func (s *Store[T]) Set(uuidKey string, value T) {
 		s.arr[14].set(uuidKey, value)
 	case 'f':
 		s.arr[15].set(uuidKey, value)
+	default:
+		s.arr[16].set(uuidKey, value)
 	}
 	s.RUnlock()
 }
 
-func (s *Store[T]) SetWithTtl(uuidKey string, value T, ttl time.Duration) {
+// SetWithCustomTTL is optimized for UUID keys, but other formats are allowed too
+func (s *Store[T]) SetWithCustomTTL(uuidKey string, value T, ttl time.Duration) {
+	if uuidKey == "" {
+		return
+	}
+
 	k := uuidKey[len(uuidKey)-1]
 	s.RLock()
 	if s.closed {
@@ -186,37 +188,39 @@ func (s *Store[T]) SetWithTtl(uuidKey string, value T, ttl time.Duration) {
 	}
 	switch k {
 	case '0':
-		s.arr[0].setWithTtl(uuidKey, value, ttl)
+		s.arr[0].setWithTTL(uuidKey, value, ttl)
 	case '1':
-		s.arr[1].setWithTtl(uuidKey, value, ttl)
+		s.arr[1].setWithTTL(uuidKey, value, ttl)
 	case '2':
-		s.arr[2].setWithTtl(uuidKey, value, ttl)
+		s.arr[2].setWithTTL(uuidKey, value, ttl)
 	case '3':
-		s.arr[3].setWithTtl(uuidKey, value, ttl)
+		s.arr[3].setWithTTL(uuidKey, value, ttl)
 	case '4':
-		s.arr[4].setWithTtl(uuidKey, value, ttl)
+		s.arr[4].setWithTTL(uuidKey, value, ttl)
 	case '5':
-		s.arr[5].setWithTtl(uuidKey, value, ttl)
+		s.arr[5].setWithTTL(uuidKey, value, ttl)
 	case '6':
-		s.arr[6].setWithTtl(uuidKey, value, ttl)
+		s.arr[6].setWithTTL(uuidKey, value, ttl)
 	case '7':
-		s.arr[7].setWithTtl(uuidKey, value, ttl)
+		s.arr[7].setWithTTL(uuidKey, value, ttl)
 	case '8':
-		s.arr[8].setWithTtl(uuidKey, value, ttl)
+		s.arr[8].setWithTTL(uuidKey, value, ttl)
 	case '9':
-		s.arr[9].setWithTtl(uuidKey, value, ttl)
+		s.arr[9].setWithTTL(uuidKey, value, ttl)
 	case 'a':
-		s.arr[10].setWithTtl(uuidKey, value, ttl)
+		s.arr[10].setWithTTL(uuidKey, value, ttl)
 	case 'b':
-		s.arr[11].setWithTtl(uuidKey, value, ttl)
+		s.arr[11].setWithTTL(uuidKey, value, ttl)
 	case 'c':
-		s.arr[12].setWithTtl(uuidKey, value, ttl)
+		s.arr[12].setWithTTL(uuidKey, value, ttl)
 	case 'd':
-		s.arr[13].setWithTtl(uuidKey, value, ttl)
+		s.arr[13].setWithTTL(uuidKey, value, ttl)
 	case 'e':
-		s.arr[14].setWithTtl(uuidKey, value, ttl)
+		s.arr[14].setWithTTL(uuidKey, value, ttl)
 	case 'f':
-		s.arr[15].setWithTtl(uuidKey, value, ttl)
+		s.arr[15].setWithTTL(uuidKey, value, ttl)
+	default:
+		s.arr[16].setWithTTL(uuidKey, value, ttl)
 	}
 	s.RUnlock()
 }
@@ -224,6 +228,11 @@ func (s *Store[T]) SetWithTtl(uuidKey string, value T, ttl time.Duration) {
 func (s *Store[T]) Get(uuidKey string) (T, bool) {
 	var v T
 	var ok bool
+
+	if uuidKey == "" {
+		return v, false
+	}
+
 	k := uuidKey[len(uuidKey)-1]
 	s.RLock()
 	if s.closed {
@@ -263,12 +272,18 @@ func (s *Store[T]) Get(uuidKey string) (T, bool) {
 		v, ok = s.arr[14].get(uuidKey)
 	case 'f':
 		v, ok = s.arr[15].get(uuidKey)
+	default:
+		v, ok = s.arr[16].get(uuidKey)
 	}
 	s.RUnlock()
 	return v, ok
 }
 
 func (s *Store[T]) Delete(uuidKey string) {
+	if uuidKey == "" {
+		return
+	}
+
 	k := uuidKey[len(uuidKey)-1]
 	s.RLock()
 	if s.closed {
@@ -308,6 +323,8 @@ func (s *Store[T]) Delete(uuidKey string) {
 		s.arr[14].delete(uuidKey)
 	case 'f':
 		s.arr[15].delete(uuidKey)
+	default:
+		s.arr[16].delete(uuidKey)
 	}
 	s.RUnlock()
 }
