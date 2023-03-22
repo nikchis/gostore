@@ -20,29 +20,39 @@ type store[T any] struct {
 	closed bool
 }
 
-func newStore[T any](ttl time.Duration) *store[T] {
+func newStore[T any](ttl, shift time.Duration) *store[T] {
 	s := store[T]{ttl: ttl}
 	s.data = make(map[string]item[T])
 	s.stop = make(chan struct{})
-	if s.ttl > 0 {
-		go func() {
-			for {
-				select {
-				case <-s.stop:
-					return
-				case <-time.After(s.ttl):
-					t := time.Now()
-					s.Lock()
-					for k, v := range s.data {
-						if t.After(v.expire) {
-							delete(s.data, k)
-						}
-					}
-					s.Unlock()
-				}
-			}
-		}()
+
+	if s.ttl <= 0 {
+		return &s
 	}
+
+	go func() {
+		<-time.After(shift)
+
+		period := ttl / 2
+		timer := time.NewTimer(period)
+		defer timer.Stop()
+
+		for {
+			select {
+			case <-s.stop:
+				return
+			case <-timer.C:
+				t := time.Now()
+				s.Lock()
+				for k, v := range s.data {
+					if t.After(v.expire) {
+						delete(s.data, k)
+					}
+				}
+				s.Unlock()
+			}
+		}
+	}()
+
 	return &s
 }
 

@@ -19,7 +19,8 @@ type Store[T any] struct {
 func New[T any](ttl time.Duration) (*Store[T], func()) {
 	s := Store[T]{ttl: ttl}
 	for i := range s.arr {
-		s.arr[i] = newStore[T](ttl)
+		invalidationShift := time.Duration(i+1) * 50 * time.Millisecond
+		s.arr[i] = newStore[T](ttl, invalidationShift)
 	}
 	return &s, func() { s.Close() }
 }
