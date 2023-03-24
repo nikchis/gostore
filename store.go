@@ -33,14 +33,14 @@ func newStore[T any](ttl, shift time.Duration) *store[T] {
 		<-time.After(shift)
 
 		period := ttl / 2
-		timer := time.NewTimer(period)
-		defer timer.Stop()
+		ticker := time.NewTicker(period)
+		defer ticker.Stop()
 
 		for {
 			select {
 			case <-s.stop:
 				return
-			case <-timer.C:
+			case <-ticker.C:
 				t := time.Now()
 				s.Lock()
 				for k, v := range s.data {
