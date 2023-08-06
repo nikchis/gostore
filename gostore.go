@@ -4,110 +4,178 @@ package gostore
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type Store[T any] struct {
-	sync.RWMutex
-	arr    [storeArrLastIndex + 1]*store[T]
+	arr    [arrLastIndex + 1]*store[T]
 	ttl    time.Duration
-	closed bool
+	closed atomic.Bool
 }
 
-// Create a new Store with TTL
-// Use TTL = 0 to disable TTL invalidation
+// Create a new Store with TTL optimized for alphanumeric keys.
+// Use TTL = 0 to disable TTL invalidation.
 func New[T any](ttl time.Duration) (*Store[T], func()) {
+	if ttl == 0 {
+		ttl = durationMax
+	}
 	s := Store[T]{ttl: ttl}
 	for i := range s.arr {
-		invalidationShift := time.Duration(i+1) * 50 * time.Millisecond
+		invalidationShift := time.Duration(i+1) * shiftDefault
 		s.arr[i] = newStore[T](ttl, invalidationShift)
 	}
 	return &s, func() { s.Close() }
 }
 
-// Close Store and free resources
+// Create a new Store with TTL optimized for UUID keys.
+// Use TTL = 0 to disable TTL invalidation.
+func NewUUID[T any](ttl time.Duration) (*Store[T], func()) {
+	if ttl == 0 {
+		ttl = durationMax
+	}
+	s := Store[T]{ttl: ttl}
+	var lastIndexStore *store[T]
+	for i := range s.arr {
+		invalidationShift := time.Duration(i+1) * shiftDefault
+		if i <= arrFIndex {
+			s.arr[i] = newStore[T](ttl, invalidationShift)
+			continue
+		}
+		if lastIndexStore == nil {
+			lastIndexStore = newStore[T](ttl, invalidationShift)
+		}
+		s.arr[i] = lastIndexStore
+	}
+	return &s, func() { s.Close() }
+}
+
+// Create a new Store with TTL optimized for numeric keys.
+// Use TTL = 0 to disable TTL invalidation.
+func NewNumeric[T any](ttl time.Duration) (*Store[T], func()) {
+	if ttl == 0 {
+		ttl = durationMax
+	}
+	s := Store[T]{ttl: ttl}
+	var lastIndexStore *store[T]
+	for i := range s.arr {
+		invalidationShift := time.Duration(i+1) * shiftDefault
+		if i <= arr9Index {
+			s.arr[i] = newStore[T](ttl, invalidationShift)
+			continue
+		}
+		if lastIndexStore == nil {
+			lastIndexStore = newStore[T](ttl, invalidationShift)
+		}
+		s.arr[i] = lastIndexStore
+	}
+	return &s, func() { s.Close() }
+}
+
+// Close Store and free resources.
 func (s *Store[T]) Close() {
-	s.Lock()
-	defer s.Unlock()
-	if s.closed {
+	if s == nil || !s.closed.CompareAndSwap(false, true) {
 		return
 	}
-	s.closed = true
 	for i := range s.arr {
 		if s.arr[i] != nil {
 			s.arr[i].close()
+			s.arr[i] = nil
 		}
-		s.arr[i] = nil
 	}
 }
 
-// Set is optimized for UUID keys, but other formats are allowed too
-func (s *Store[T]) Set(uuidKey string, value T) {
-	if uuidKey == "" {
+// Set is optimized for alphanumeric, UUID or numeric keys.
+// But other formats are allowable too.
+func (s *Store[T]) Set(key string, value T) {
+	if s == nil || s.closed.Load() || key == "" {
 		return
 	}
-
-	k := uuidKey[len(uuidKey)-1]
-
-	s.RLock()
-	if s.closed {
-		s.RUnlock()
-		return
-	}
-	s.arr[keyChar(k).storeArrIndex()].set(uuidKey, value)
-	s.RUnlock()
+	k := key[len(key)-1]
+	s.arr[keyChar(k).arrIndex()].set(key, value)
 }
 
-// SetWithCustomTTL is optimized for UUID keys, but other formats are allowed too
-func (s *Store[T]) SetWithCustomTTL(uuidKey string, value T, ttl time.Duration) {
-	if uuidKey == "" {
+// SetWithCustomTTL is optimized for alphanumeric, UUID or numeric keys.
+// But other formats are allowable too.
+func (s *Store[T]) SetWithCustomTTL(key string, value T, ttl time.Duration) {
+	if s == nil || s.closed.Load() || key == "" {
 		return
 	}
-
-	k := uuidKey[len(uuidKey)-1]
-
-	s.RLock()
-	if s.closed {
-		s.RUnlock()
-		return
-	}
-	s.arr[keyChar(k).storeArrIndex()].setWithTTL(uuidKey, value, ttl)
-	s.RUnlock()
+	k := key[len(key)-1]
+	s.arr[keyChar(k).arrIndex()].setWithTTL(key, value, ttl)
 }
 
-func (s *Store[T]) Get(uuidKey string) (T, bool) {
-	var v T
-	var ok bool
-
-	if uuidKey == "" {
+func (s *Store[T]) Get(key string) (T, bool) {
+	if s == nil || s.closed.Load() || key == "" {
+		var v T
 		return v, false
 	}
-
-	k := uuidKey[len(uuidKey)-1]
-
-	s.RLock()
-	if s.closed {
-		s.RUnlock()
-		return v, false
-	}
-	v, ok = s.arr[keyChar(k).storeArrIndex()].get(uuidKey)
-	s.RUnlock()
-
+	k := key[len(key)-1]
+	v, ok := s.arr[keyChar(k).arrIndex()].get(key)
 	return v, ok
 }
 
-func (s *Store[T]) Delete(uuidKey string) {
-	if uuidKey == "" {
+func (s *Store[T]) Delete(key string) {
+	if s == nil || s.closed.Load() || key == "" {
 		return
 	}
+	k := key[len(key)-1]
+	s.arr[keyChar(k).arrIndex()].delete(key)
+}
 
-	k := uuidKey[len(uuidKey)-1]
-
-	s.RLock()
-	if s.closed {
-		s.RUnlock()
-		return
+func (s *Store[T]) Size() int {
+	if s == nil || s.closed.Load() {
+		return 0
 	}
-	s.arr[keyChar(k).storeArrIndex()].delete(uuidKey)
-	s.RUnlock()
+	var size int = s.arr[0].size()
+	for i := 1; i <= arrLastIndex; i++ {
+		if s.arr[i] == s.arr[i-1] {
+			break
+		}
+		size += s.arr[i].size()
+	}
+	return size
+}
+
+func (s *Store[T]) Keys() []string {
+	if s == nil || s.closed.Load() {
+		return []string{}
+	}
+	keys := make([]string, 0, s.Size())
+	keys = append(keys, s.arr[0].keys()...)
+	for i := 1; i <= arrLastIndex; i++ {
+		if s.arr[i] == s.arr[i-1] {
+			break
+		}
+		keys = append(keys, s.arr[i].keys()...)
+	}
+	return keys
+}
+
+// Deletes all expired by TTL values.
+// Returns count of deleted values.
+func (s *Store[T]) Invalidate() int64 {
+	if s == nil || s.closed.Load() {
+		return 0
+	}
+	var count atomic.Int64
+	var wg sync.WaitGroup
+	for i := 1; i <= arrLastIndex; i++ {
+		if s.arr[i] == s.arr[i-1] {
+			break
+		}
+		if s.arr[i].size() >= 1000 {
+			wg.Add(1)
+			go func(i int) {
+				count.Add(s.arr[i].invalidate())
+				wg.Done()
+			}(i)
+		} else {
+			count.Add(s.arr[i].invalidate())
+		}
+	}
+	count.Add(s.arr[0].invalidate())
+	wg.Wait()
+
+	return count.Load()
 }

@@ -1,3 +1,3 @@
 module github.com/nikchis/gostore
 
-go 1.18
+go 1.19
